@@ -1,0 +1,108 @@
+name: Create strapi instance from user's input 
+
+# Triggers the workflow on api call
+on:
+  repository_dispatch:
+    types: [instance]
+    
+env:
+  DEPLOYMENT: ${{ github.event.client_payload.deployment_file }}
+  EKS_CLUSTER: dev
+  EKS_REGION: us-east-2
+
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  Job1:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+     - name: Checkout
+       uses: actions/checkout@v2
+    
+    # AWS Credentials
+     - uses: aws-actions/configure-aws-credentials@v1
+       with:
+         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+         aws-region: ${{ env.EKS_REGION }}
+
+     # Get the EKS credentials so we can deploy to the cluster
+     - run: |-
+         aws eks --region $EKS_REGION update-kubeconfig --name $EKS_CLUSTER 
+         
+     # Login to Jfrog
+     - name: Jfrog login
+       env:
+         JFROG_USER: ${{ secrets.JFROG_USER }}
+         JFROG_PASSWORD: ${{ secrets.JFROG_PASSWORD }}
+       run: |
+         docker login sreyo.jfrog.io -u $JFROG_USER -p $JFROG_PASSWORD
+         kubectl delete secret jfrog-secret --ignore-not-found 
+         kubectl create secret generic jfrog-secret --from-file=.dockerconfigjson=/home/runner/.docker/config.json  --type=kubernetes.io/dockerconfigjson 
+         
+     # Deploy docorized app image to the GKE cluster
+     - name: Deploy Frontend 
+       run: |-
+         kubectl apply -f ${DEPLOYMENT}
+         kubectl wait --timeout=120s --for=condition=ready pod -l app=frontend
+         kubectl rollout restart deploy frontend-deployment
+         kubectl rollout status deployment frontend-deployment     
+         
+     # Deploy gateway and virtual services
+     - name: Deploy gateway
+       run: |-
+         kubectl apply -f gateway.yaml
+         kubectl get svc -l=istio=ingressgateway -n istio-system
+         #kubectl apply -f gateway.yaml
+         kubectl apply -f vs-frontend.yaml   
+         
+         
+  Job2:
+       needs: Job1
+       name: Create subdomain in Cloudflare
+       runs-on: ubuntu-latest    
+
+       steps:
+       - name: Checkout
+         uses: actions/checkout@v2
+
+
+       # AWS Credentials
+       - uses: aws-actions/configure-aws-credentials@v1
+         with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.EKS_REGION }}
+
+      # Get the EKS credentials so we can deploy to the cluster
+       - run: |-
+          aws eks --region $EKS_REGION update-kubeconfig --name $EKS_CLUSTER
+
+       - name: Update CloudFlare DNS with Cluster IP 
+         run: |-
+           # purge any existing records for our EKS subdomain.
+           existing_records=( $(curl -X GET "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_DNS_ZONE }}/dns_records?type=CNAME&name=instance.sreyo.in" \
+              -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
+              -H "X-Auth-Key: ${{ secrets.CLOUDFLARE_API_KEY }}" \
+              -H "Content-Type: application/json"   | jq -r '.result[].id') )
+           for record in ${existing_records[@]}; do
+             curl -X DELETE "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_DNS_ZONE }}/dns_records/${record}" \
+                -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
+                -H "X-Auth-Key: ${{ secrets.CLOUDFLARE_API_KEY }}" \
+                -H "Content-Type: application/json"
+           done
+
+           # Create new record with latest cluster IP.
+           CLUSTER_HOSTNAME=$(kubectl -n istio-system get service istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+           curl -X POST "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_DNS_ZONE }}/dns_records" \
+              -H "X-Auth-Email: ${{ secrets.CLOUDFLARE_EMAIL }}" \
+              -H "X-Auth-Key: ${{ secrets.CLOUDFLARE_API_KEY }}" \
+              -H "Content-Type: application/json" \
+              --data '{"type":"CNAME","name":"instance","content":"'${CLUSTER_HOSTNAME}'","ttl":120,"priority":10,"proxied":true}'
+              #--data '{"type":"A","name":"${{ github.head_ref }}","content":"'${CLUSTER_IP}'","ttl":120,"priority":10,"proxied":true}'
+
+       
