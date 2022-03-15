@@ -50,6 +50,7 @@ jobs:
      # Deploy docorized app image to the GKE cluster
      - name: Deploy Frontend 
        run: |-
+         echo ${DEPLOYMENT}
          kubectl apply -f ${DEPLOYMENT}
          kubectl apply -f frontend.yaml
          kubectl wait --timeout=120s --for=condition=ready pod -l app=frontend
