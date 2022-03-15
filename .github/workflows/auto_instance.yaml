@@ -1,12 +1,12 @@
 name: Create strapi instance from user's input 
 
-on:
-  workflow_dispatch
-
-# # Triggers the workflow on api call
 # on:
-#   repository_dispatch:
-#     types: [instance]
+#   workflow_dispatch
+
+# Triggers the workflow on api call
+on:
+  repository_dispatch:
+    types: [instance]
     
 env:
   DEPLOYMENT: ${{ github.event.client_payload.deployment_file }}
@@ -50,7 +50,7 @@ jobs:
      # Deploy docorized app image to the GKE cluster
      - name: Deploy Frontend 
        run: |-
-         #kubectl apply -f ${DEPLOYMENT}
+         kubectl apply -f ${DEPLOYMENT}
          kubectl apply -f frontend.yaml
          kubectl wait --timeout=120s --for=condition=ready pod -l app=frontend
          kubectl rollout restart deploy frontend-deployment
