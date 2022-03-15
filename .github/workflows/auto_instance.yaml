@@ -9,7 +9,7 @@ on:
     types: [instance]
     
 env:
-  DEPLOYMENT: ${{ github.event.client_payload.deployment_file }}
+  DEPLOYMENT: ${{ github.event.client_payload.deployment_file.Deployment }}
   EKS_CLUSTER: dev
   EKS_REGION: us-east-2
 
