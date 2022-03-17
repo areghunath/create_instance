@@ -9,7 +9,8 @@ on:
     types: [instance]
     
 env:
-  DEPLOYMENT: ${{ github.event.client_payload.deployment_file }}
+  #DEPLOYMENT: ${{ github.event.client_payload.deployment_file }}
+  DEPLOYMENT: '{ "apiVersion": "apps/v1", "kind": "Deployment", "metadata": { "name": "frontend-deployment", "labels": { "app": "frontend" } }, "spec": { "replicas": 1, "selector": { "matchLabels": { "app": "frontend" } }, "template": { "metedata": { "labels": { "app": "frontend" } }, "spec": { "imagePullSecrets": { "name": "jfrog-secret" }, "containers": { "name": "frontend", "image": "sreyo.jfrog.io/ns-docker-dev-local/frontend-docker", "imagePullPolicy": "Always", "ports": { "cointainerPort": 80 } } } } } }'
   EKS_CLUSTER: dev
   EKS_REGION: us-east-2
 
